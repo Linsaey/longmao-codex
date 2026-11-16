@@ -7,13 +7,14 @@
   var CLS = { zhanshi: '战士', dunwei: '盾卫', fashi: '法师', youxia: '游侠' };
   var SLOT = {
     weapon: '武器', offhand: '副手', head: '头部', chest: '上装', hands: '手套',
-    legs: '下装', feet: '鞋子', ring: '戒指', earrings: '耳环',
+    legs: '下装', feet: '鞋', ring: '戒指', earrings: '耳环',
     'spirit-stone': '灵石', socks: '袜子', eyes: '眼部', face: '脸部'
   };
   var TYPE = {
     equipment: '装备', puzzle: '拼图', consumable: '消耗品', material: '材料',
     puzzleBlock: '拼图块', special: '特殊', puzzleTicket: '拼图券'
   };
+  var SKTYPE = { main: '主动', passive: '被动', state: '状态' };
   var STAT = {
     strength: '力量', magic: '魔力', vitality: '体力', luck: '幸运',
     hp: '生命', mp: '魔法值', minAttack: '最小攻击', maxAttack: '最大攻击',
@@ -39,12 +40,9 @@
     kamiao_armor: '卡喵·护甲', shelong_armor: '蛇龙·护甲', shelong_weapon: '蛇龙·武器',
     xuanwu_armor: '玄武·护甲', xuanwu_weapon: '玄武·武器'
   };
-  function poolName(p) { return (POOL[p] || p) + '池'; }
-  function slots(o) {
-    if (!o || !o.slot) return [];
-    return Array.isArray(o.slot) ? o.slot : [o.slot];
-  }
-  function slotNames(o) { return slots(o).map(function (s) { return SLOT[s] || s; }).join(' / '); }
+  var BANDS = [['1-20', 1, 20], ['21-40', 21, 40], ['41-60', 41, 60], ['61-80', 61, 80], ['81-100', 81, 100]];
+  var ARMOR = ['head', 'chest', 'hands', 'legs', 'feet'];
+  var ACC = ['ring', 'earrings', 'spirit-stone', 'socks', 'eyes', 'face'];
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -52,18 +50,28 @@
     });
   }
   function num(v) { return typeof v === 'number' ? v : Number(v); }
+  function nf(v, d) {
+    var n = num(v);
+    if (!isFinite(n)) return '—';
+    return n.toFixed(d == null ? 2 : d).replace(/\.?0+$/, '');
+  }
+  function num2(n) {
+    if (n == null || n === '') return '—';
+    var v = num(n);
+    if (isNaN(v)) return esc(n);
+    return Math.abs(v) >= 1000 ? v.toLocaleString('en-US') : String(v);
+  }
   function statName(k) {
     var base = String(k).replace(/percent$/i, '');
     return (STAT[base] || base) + (/percent$/i.test(k) ? '%' : '');
   }
   function statVal(k, v) {
-    var isPct = PCT[k] || /percent$/i.test(k);
-    if (isPct) {
+    if (PCT[k] || /percent$/i.test(k)) {
       var p = num(v) * 100;
-      return (p > 0 ? '+' : '') + p.toFixed(2).replace(/\.?0+$/, '') + '%';
+      return (p > 0 ? '+' : '') + nf(p) + '%';
     }
     var n = num(v);
-    return (n > 0 ? '+' : '') + (Number.isInteger(n) ? n : n.toFixed(2));
+    return (n > 0 ? '+' : '') + (Number.isInteger(n) ? n : nf(n, 2));
   }
   function prob(p) {
     if (!isFinite(p) || p <= 0) return '—';
@@ -73,12 +81,14 @@
     if (v >= 0.0001) return v.toFixed(4) + '%';
     return v.toExponential(2) + '%';
   }
-  function num2(n) {
-    if (n == null || n === '') return '—';
-    var v = num(n);
-    if (isNaN(v)) return esc(n);
-    return Math.abs(v) >= 1000 ? v.toLocaleString('en-US') : String(v);
+  function pct(v) { return v == null ? '—' : (num(v) * 100).toFixed(0) + '%'; }
+  function poolName(p) { return (POOL[p] || p) + '池'; }
+  function slots(o) {
+    if (!o || !o.slot) return [];
+    return Array.isArray(o.slot) ? o.slot : [o.slot];
   }
+  function slotNames(o) { return slots(o).map(function (s) { return SLOT[s] || s; }).join(' / '); }
+  function baseName(o) { return String((o && o.n) || '').replace(/\+\d+$/, ''); }
 
   // ---------- 索引 ----------
   var mapById = {}, monById = {}, itemById = {}, skillById = {}, setById = {}, buffById = {};
@@ -90,7 +100,6 @@
   D.buffs.forEach(function (x) { buffById[x.id] = x; });
   var groups = D.groups || {}, gpool = D.gpool || {};
 
-  // 怪物 → 地图（area 可能是逗号分隔的字符串，也可能是数组）
   function areasOf(m) {
     if (!m.area) return [];
     var a = Array.isArray(m.area) ? m.area : String(m.area).split(',');
@@ -98,105 +107,212 @@
   }
   var MONS_OF = {};
   D.mons.forEach(function (m) {
-    areasOf(m).forEach(function (aid) {
-      (MONS_OF[aid] = MONS_OF[aid] || []).push(m.id);
-    });
+    areasOf(m).forEach(function (aid) { (MONS_OF[aid] = MONS_OF[aid] || []).push(m.id); });
   });
 
   // ---------- 分类 ----------
   var TABS = [
-    { k: 'mon', n: '怪物', c: D.mons.length, f: 'region' },
-    { k: 'equip', n: '装备', c: D.items.filter(function (i) { return i.t === 'equipment'; }).length, f: 'slot' },
-    { k: 'item', n: '道具', c: D.items.filter(function (i) { return i.t !== 'equipment' && i.pt !== 'buff'; }).length, f: 'itype' },
-    { k: 'skill', n: '技能', c: D.skills.length, f: 'sclass' },
-    { k: 'set', n: '套装', c: D.sets.length, f: '' },
-    { k: 'map', n: '地图', c: D.maps.length, f: '' },
-    { k: 'buff', n: '药水BUFF', c: D.buffs.length, f: '' }
+    { k: 'mon', n: '怪物', c: D.mons.length },
+    { k: 'equip', n: '装备', c: D.items.filter(function (i) { return i.t === 'equipment'; }).length },
+    { k: 'item', n: '道具', c: D.items.filter(function (i) { return i.t !== 'equipment' && i.pt !== 'buff'; }).length },
+    { k: 'skill', n: '技能', c: D.skills.length },
+    { k: 'set', n: '套装', c: D.sets.length },
+    { k: 'map', n: '地图', c: D.maps.length },
+    { k: 'buff', n: '药水BUFF', c: D.buffs.length }
   ];
-  var tab = 'mon', kw = '', fv = '';
+  var S = { tab: 'mon', kw: '', g1: '', g2: '', lv: '', sort: '', merge: true };
 
-  function tabConf(k) {
-    for (var i = 0; i < TABS.length; i++) { if (TABS[i].k === k) return TABS[i]; }
-    return TABS[0];
+  // ---------- 筛选配置 ----------
+  function wtCount(condition) {
+    var m = {}, order = [];
+    D.items.forEach(function (i) {
+      if (i.t !== 'equipment' || !i.wt || !condition(i)) return;
+      if (!m[i.wt]) { m[i.wt] = 0; order.push(i.wt); }
+      m[i.wt]++;
+    });
+    order.sort(function (a, b) { return m[b] - m[a]; });
+    return order.map(function (w) { return [w, w]; });
+  }
+  function slotCount(list) {
+    var m = {}, order = [];
+    D.items.forEach(function (i) {
+      if (i.t !== 'equipment') return;
+      slots(i).forEach(function (s) {
+        if (list.indexOf(s) < 0) return;
+        if (!m[s]) { m[s] = 0; order.push(s); }
+        m[s]++;
+      });
+    });
+    order.sort(function (a, b) { return m[b] - m[a]; });
+    return order.map(function (s) { return [s, SLOT[s] || s]; });
   }
 
-  function filterOptions(k) {
-    if (k === 'region') {
-      var arr = [['', '全部区服']];
-      D.regions.forEach(function (r) { arr.push([r.id, r.n]); });
-      return arr;
+  var F1 = {
+    mon: [{ id: '', label: '全部区服' }].concat(D.regions.map(function (r) { return { id: r.id, label: r.n }; })),
+    equip: [
+      { id: '', label: '全部' }, { id: 'weapon', label: '武器' }, { id: 'offhand', label: '副手' },
+      { id: 'armor', label: '防具' }, { id: 'acc', label: '饰品' }
+    ],
+    item: [{ id: '', label: '全部类型' },
+      { id: 'consumable', label: '消耗品' }, { id: 'material', label: '材料' },
+      { id: 'puzzle', label: '拼图' }, { id: 'puzzleBlock', label: '拼图块' },
+      { id: 'special', label: '特殊' }, { id: 'puzzleTicket', label: '拼图券' }],
+    skill: [{ id: '', label: '全部职业' }].concat(Object.keys(CLS).map(function (c) { return { id: c, label: CLS[c] }; })),
+    map: [{ id: '', label: '全部区域' }, { id: 'field', label: '野外' },
+      { id: 'boss', label: '领主' }, { id: 'dungeon', label: '副本' }],
+    set: [], buff: []
+  };
+
+  function f2Options() {
+    if (S.tab === 'equip') {
+      if (S.g1 === 'weapon') return [{ id: '', label: '全部武器类型' }].concat(
+        wtCount(function (i) { return slots(i).indexOf('weapon') >= 0; }).map(function (x) { return { id: x[0], label: x[1] }; }));
+      if (S.g1 === 'offhand') return [{ id: '', label: '全部副手类型' }].concat(
+        wtCount(function (i) { return slots(i).indexOf('offhand') >= 0; }).map(function (x) { return { id: x[0], label: x[1] }; }));
+      if (S.g1 === 'armor') return [{ id: '', label: '全部部位' }].concat(
+        slotCount(ARMOR).map(function (x) { return { id: x[0], label: x[1] }; }));
+      if (S.g1 === 'acc') return [{ id: '', label: '全部部位' }].concat(
+        slotCount(ACC).map(function (x) { return { id: x[0], label: x[1] }; }));
+      return [];
     }
-    if (k === 'slot') {
-      return [['', '全部槽位'], ['weapon', '武器'], ['offhand', '副手'], ['armor', '防具'], ['acc', '饰品']];
+    if (S.tab === 'mon') {
+      if (!S.g1) return [];
+      var maps = D.maps.filter(function (m) { return m.r === S.g1; });
+      return [{ id: '', label: '全部地图' }].concat(
+        maps.map(function (m) { return { id: m.id, label: m.n + ' Lv' + (m.lo || '?') }; }));
     }
-    if (k === 'itype') {
-      return [['', '全部类型'], ['consumable', '消耗品'], ['material', '材料'],
-        ['puzzle', '拼图'], ['puzzleBlock', '拼图块'], ['special', '特殊'], ['puzzleTicket', '拼图券']];
+    if (S.tab === 'item') {
+      if (S.g1 === 'consumable') return [{ id: '', label: '全部' }, { id: 'alchemy', label: '炼金产物' }, { id: 'other', label: '普通' }];
+      if (S.g1 === 'material') return [{ id: '', label: '全部' }, { id: 'craft', label: '制作材料' }, { id: 'other', label: '普通材料' }];
+      return [];
     }
-    if (k === 'sclass') {
-      return [['', '全部职业'], ['zhanshi', '战士'], ['dunwei', '盾卫'], ['fashi', '法师'], ['youxia', '游侠']];
+    if (S.tab === 'skill') {
+      if (S.g1) return [{ id: '', label: '全部类型' }, { id: 'main', label: '主动' },
+        { id: 'passive', label: '被动' }, { id: 'state', label: '状态' }];
+      return [{ id: '', label: '全部类型' }, { id: 'main', label: '主动' },
+        { id: 'passive', label: '被动' }, { id: 'state', label: '状态' }];
     }
     return [];
   }
 
-  function inSlot(it, v) {
-    if (!v) return true;
-    var ss = slots(it);
-    if (v === 'weapon') return ss.indexOf('weapon') >= 0;
-    if (v === 'offhand') return ss.indexOf('offhand') >= 0;
-    if (v === 'armor') return ss.some(function (s) { return ['head', 'chest', 'hands', 'legs', 'feet'].indexOf(s) >= 0; });
-    if (v === 'acc') return ss.some(function (s) { return ['ring', 'earrings', 'spirit-stone', 'socks', 'eyes', 'face'].indexOf(s) >= 0; });
+  var SORTS = {
+    mon: [['lv+', '等级升序'], ['lv-', '等级降序'], ['exp', '经验最多'], ['name', '名称']],
+    equip: [['lv+', '等级升序'], ['lv-', '等级降序'], ['name', '名称'], ['sell', '卖价最高']],
+    item: [['lv+', '等级升序'], ['lv-', '等级降序'], ['name', '名称'], ['sell', '卖价最高']],
+    skill: [['lv+', '等级升序'], ['lv-', '等级降序'], ['name', '名称']],
+    set: [['name', '名称']],
+    map: [['lv+', '等级升序'], ['lv-', '等级降序'], ['name', '名称']],
+    buff: [['name', '名称']]
+  };
+
+  function levelOf(k, o) {
+    if (k === 'mon') return o.lv;
+    if (k === 'equip' || k === 'item') return (o.req && o.req.level) || null;
+    if (k === 'skill') return (o.lv && o.lv[0]) ? o.lv[0][1] : null;
+    if (k === 'map') return o.lo;
+    return null;
+  }
+  function passLevel(k, o) {
+    if (!S.lv) return true;
+    var v = levelOf(k, o);
+    if (v == null) return false;
+    for (var i = 0; i < BANDS.length; i++) {
+      if (BANDS[i][0] === S.lv) return v >= BANDS[i][1] && v <= BANDS[i][2];
+    }
+    return true;
+  }
+  function matchKw(o) {
+    if (!S.kw) return true;
+    var q = S.kw.toLowerCase();
+    return String(o.n || '').toLowerCase().indexOf(q) >= 0 || String(o.id).toLowerCase().indexOf(q) >= 0;
+  }
+
+  function passRow(k, o) {
+    if (!matchKw(o) || !passLevel(k, o)) return false;
+    if (k === 'equip') {
+      var ss = slots(o);
+      if (S.g1 === 'weapon' && ss.indexOf('weapon') < 0) return false;
+      if (S.g1 === 'offhand' && ss.indexOf('offhand') < 0) return false;
+      if (S.g1 === 'armor' && !ss.some(function (s) { return ARMOR.indexOf(s) >= 0; })) return false;
+      if (S.g1 === 'acc' && !ss.some(function (s) { return ACC.indexOf(s) >= 0; })) return false;
+      if (S.g2) {
+        if (S.g1 === 'weapon' || S.g1 === 'offhand') { if (o.wt !== S.g2) return false; }
+        else if (ss.indexOf(S.g2) < 0) return false;
+      }
+      return true;
+    }
+    if (k === 'item') {
+      if (S.g1 && o.t !== S.g1) return false;
+      if (S.g2 === 'alchemy') return o.st === 'alchemy';
+      if (S.g2 === 'craft') return o.st === 'craft';
+      if (S.g2 === 'other') return o.st !== 'alchemy' && o.st !== 'craft';
+      return true;
+    }
+    if (k === 'mon') {
+      var as = areasOf(o);
+      if (S.g1 && !as.some(function (aid) { return mapById[aid].r === S.g1; })) return false;
+      if (S.g2 && as.indexOf(S.g2) < 0) return false;
+      return true;
+    }
+    if (k === 'skill') {
+      if (S.g1 && (o.cls || []).indexOf(S.g1) < 0) return false;
+      if (S.g2 && o.t !== S.g2) return false;
+      return true;
+    }
+    if (k === 'map') {
+      if (S.g1 && o.rk !== S.g1) return false;
+      return true;
+    }
     return true;
   }
 
-  function match(s) {
-    if (!kw) return true;
-    var q = kw.toLowerCase();
-    return String(s).toLowerCase().indexOf(q) >= 0;
+  function sortRows(k, rows) {
+    var key = S.sort || SORTS[k][0][0];
+    rows.sort(function (a, b) {
+      var oa = a.o, ob = b.o;
+      if (key === 'lv+' || key === 'lv-') {
+        var la = levelOf(k, oa), lb = levelOf(k, ob);
+        var d = (la == null ? -1 : la) - (lb == null ? -1 : lb);
+        return key === 'lv+' ? d : -d;
+      }
+      if (key === 'name') return String(oa.n || '').localeCompare(String(ob.n || ''), 'zh');
+      if (key === 'sell') return (num(ob.sell) || 0) - (num(oa.sell) || 0);
+      if (key === 'exp') return (num(ob.exp) || 0) - (num(oa.exp) || 0);
+      return 0;
+    });
+    return rows;
+  }
+
+  function groupEquip(list) {
+    var m = {}, order = [];
+    list.forEach(function (o) {
+      var key = baseName(o) + '|' + slots(o).join(',');
+      if (!m[key]) { m[key] = { o: o, vs: [] }; order.push(key); }
+      var g = m[key];
+      g.vs.push(o.id);
+      var lg = num(g.o.req && g.o.req.level) || 0, lo = num(o.req && o.req.level) || 0;
+      if (lo < lg) g.o = o;
+    });
+    return order.map(function (k) { return m[k]; });
   }
 
   function rowsFor(k) {
-    if (k === 'mon') {
-      return D.mons.filter(function (m) {
-        if (fv) {
-          var hit = areasOf(m).some(function (aid) { return mapById[aid].r === fv; });
-          if (!hit) return false;
-        }
-        return match(m.n) || match(m.id);
-      }).sort(function (a, b) { return (a.lv || 0) - (b.lv || 0) || (a.id < b.id ? -1 : 1); });
-    }
-    if (k === 'equip') {
-      return D.items.filter(function (i) {
-        return i.t === 'equipment' && inSlot(i, fv) && (match(i.n) || match(i.id));
-      }).sort(function (a, b) {
-        var la = (a.req && a.req.level) || 0, lb = (b.req && b.req.level) || 0;
-        return la - lb || (a.rare ? -1 : 0) - (b.rare ? -1 : 0) || (a.id < b.id ? -1 : 1);
+    var src, rows;
+    if (k === 'mon') src = D.mons;
+    else if (k === 'equip' || k === 'item') {
+      src = D.items.filter(function (i) {
+        return k === 'equip' ? i.t === 'equipment' : (i.t !== 'equipment' && i.pt !== 'buff');
       });
-    }
-    if (k === 'item') {
-      return D.items.filter(function (i) {
-        return i.t !== 'equipment' && i.pt !== 'buff' && (!fv || i.t === fv) && (match(i.n) || match(i.id));
-      }).sort(function (a, b) { return a.t < b.t ? -1 : a.t > b.t ? 1 : (a.id < b.id ? -1 : 1); });
-    }
-    if (k === 'skill') {
-      return D.skills.filter(function (s) {
-        if (fv && (s.cls || []).indexOf(fv) < 0) return false;
-        return match(s.n) || match(s.id);
-      }).sort(function (a, b) {
-        var ca = (a.cls || [])[0] || 'zz', cb = (b.cls || [])[0] || 'zz';
-        return ca < cb ? -1 : ca > cb ? 1 : ((a.lv[0] || [])[1] || 0) - ((b.lv[0] || [])[1] || 0);
-      });
-    }
-    if (k === 'set') {
-      return D.sets.filter(function (s) { return match(s.n) || match(s.id); })
-        .sort(function (a, b) { return a.n < b.n ? -1 : 1; });
-    }
-    if (k === 'map') {
-      return D.maps.filter(function (m) { return match(m.n) || match(m.id) || match(m.rn); })
-        .sort(function (a, b) { return (a.lo || 0) - (b.lo || 0); });
-    }
-    return D.buffs.filter(function (b) { return match(b.n) || match(b.id); })
-      .sort(function (a, b) { return a.n < b.n ? -1 : 1; });
+    } else if (k === 'skill') src = D.skills;
+    else if (k === 'set') src = D.sets;
+    else if (k === 'map') src = D.maps;
+    else src = D.buffs;
+
+    rows = src.filter(function (o) { return passRow(k, o); })
+      .map(function (o) { return { o: o, vs: null }; });
+
+    if (k === 'equip' && S.merge) rows = groupEquip(rows.map(function (r) { return r.o; }));
+    return sortRows(k, rows);
   }
 
   // ---------- 卡片 ----------
@@ -204,34 +320,35 @@
     if (!src) return '<div class="ico ph">' + (ph || '无图') + '</div>';
     return '<img class="ico" src="' + esc(src) + '" loading="lazy" decoding="async" alt="">';
   }
-
-  function card(kind, o) {
-    var h = '', nm = esc(o.n || o.id), sub = '', tags = '';
+  function card(kind, row) {
+    var o = row.o, vs = row.vs && row.vs.length > 1 ? row.vs.length : 0;
+    var h = '', sub = '', tags = '', nm = esc(o.n || o.id);
     if (kind === 'mon') {
-      var mp = mapById[areasOf(o)[0]];
-      var anames = areasOf(o).map(function (aid) { return mapById[aid].n; });
+      var as = areasOf(o).map(function (aid) { return mapById[aid].n; });
       h = ico(o.img);
       tags = '<span class="tag">Lv' + (o.lv || '?') + '</span>';
-      sub = (anames.length ? anames.slice(0, 1).join('') + (anames.length > 1 ? ' +' + (anames.length - 1) : '') : '未挂图') +
-        ' · 经验 ' + num2(o.exp);
+      sub = (as.length ? as[0] + (as.length > 1 ? ' +' + (as.length - 1) : '') : '未挂图') + ' · 经验 ' + num2(o.exp);
     } else if (kind === 'equip' || kind === 'item') {
       h = ico(o.img);
       if (o.rare) tags += '<span class="tag rare">稀</span>';
       if (o.set) tags += '<span class="tag set">套</span>';
       if (o.t === 'equipment') {
-        sub = (slotNames(o) || TYPE[o.t] || '') + (o.req && o.req.level ? ' · Lv' + o.req.level : '') +
-          (o.sell ? ' · ' + num2(o.sell) + '金' : '');
+        sub = (o.wt || slotNames(o) || '') + (o.req && o.req.level ? ' · Lv' + o.req.level : '') +
+          (vs ? ' · ×' + vs : '') + (o.sell ? ' · ' + num2(o.sell) + '金' : '');
       } else {
-        tags = '<span class="tag">' + (TYPE[o.t] || o.t) + '</span>';
-        sub = (o.d ? String(o.d).slice(0, 22) : (o.sell ? '卖价 ' + num2(o.sell) : TYPE[o.t] || ''));
+        if (S.tab !== 'item' || S.g1 !== o.t) tags = '<span class="tag">' + (TYPE[o.t] || o.t) + '</span>' + (vs ? '<span class="tag nx">×' + vs + '</span>' : '') + tags;
+        sub = (o.pz ? statName(o.pz) + ' Lv' + (o.pzl || '') + ' 词条' : '') ||
+          (o.sell ? '卖价 ' + num2(o.sell) : '') || (o.d ? String(o.d).slice(0, 22) : TYPE[o.t] || '');
       }
     } else if (kind === 'skill') {
       h = ico(o.img);
-      tags = (o.cls || []).map(function (c) { return '<span class="tag">' + (CLS[c] || c) + '</span>'; }).join('');
-      var lastLv = o.lv[o.lv.length - 1] || [];
-      var dm = lastLv[5];
-      var dmt = Array.isArray(dm) ? dm.join('/') : (dm == null ? '' : dm);
-      sub = (o.lv[0] ? 'Lv' + o.lv[0][1] : '') + (dmt ? ' · ' + dmt + '×' : '') +
+      var clsTags = (S.tab === 'skill' && S.g1) ? '' : (o.cls || []).map(function (c) {
+        return '<span class="tag">' + (CLS[c] || c) + '</span>';
+      }).join('');
+      var typTag = (S.tab === 'skill' && S.g2) ? '' : '<span class="tag">' + (SKTYPE[o.t] || o.t || '') + '</span>';
+      tags = clsTags + typTag;
+      var lastLv = o.lv[o.lv.length - 1] || [], dm = lastLv[5];
+      sub = (o.lv[0] ? 'Lv' + o.lv[0][1] : '') + (dm ? ' · ' + (Array.isArray(dm) ? dm.join('/') : dm) + '×' : '') +
         (o.wl && o.wl.length ? ' · ' + o.wl.join('/') : '');
     } else if (kind === 'set') {
       h = ico((itemById[o.items[0]] || {}).img);
@@ -239,39 +356,82 @@
       sub = o.tiers.map(function (t) { return t[0] + '件'; }).join(' / ') + ' 效果';
     } else if (kind === 'map') {
       h = ico('', '地');
-      tags = '<span class="tag">' + (o.rn || '') + '</span>';
+      tags = '<span class="tag">' + (RK[o.rk] || o.rk || '') + '</span>' +
+        '<span class="tag">' + (o.rn || '') + '</span>';
       sub = 'Lv ' + (o.lo || '?') + '~' + (o.hi || '?') + ' · ' + (MONS_OF[o.id] || []).length + ' 种怪';
     } else {
       h = ico(o.img);
-      sub = (o.d || '') .slice(0, 24);
-      if (o.t) tags = '<span class="tag">' + Math.round((o.t || 0) / 60) + ' 分钟</span>';
+      tags = '<span class="tag">' + Math.round((o.t || 0) / 60) + ' 分钟</span>';
+      sub = (o.s || []).map(statName).slice(0, 3).join('、') +
+        (o.v != null ? ' ' + (o.m === 'percent' ? '+' + nf(num(o.v) * 100) + '%' : '+' + num(o.v)) : '');
     }
     return '<button class="card" data-k="' + kind + '" data-id="' + esc(o.id) + '">' + h +
       '<div class="c1"><div class="nm">' + tags + nm + '</div><div class="sub">' + esc(sub) + '</div></div></button>';
   }
 
+  // ---------- 渲染 ----------
+  function chips(el, list, cur, attr, cls) {
+    el.innerHTML = list.map(function (o) {
+      return '<button class="chip ' + (cls || '') + (cur === o.id ? ' on' : '') + '" ' + attr + '="' +
+        esc(o.id) + '">' + esc(o.label) + '</button>';
+    }).join('');
+  }
+
   function render() {
-    var conf = tabConf(tab);
     // tabs
     $('tabs').innerHTML = TABS.map(function (t) {
-      return '<button class="tab' + (t.k === tab ? ' on' : '') + '" data-tab="' + t.k + '">' +
+      return '<button class="tab' + (t.k === S.tab ? ' on' : '') + '" data-tab="' + t.k + '">' +
         t.n + '<span style="opacity:.6;font-size:11px"> ' + t.c + '</span></button>';
     }).join('');
-    // filters
-    var fo = filterOptions(conf.f);
-    $('filters').innerHTML = fo.map(function (o) {
-      return '<button class="chip' + (fv === o[0] ? ' on' : '') + '" data-f="' + esc(o[0]) + '">' + esc(o[1]) + '</button>';
-    }).join('');
-    $('filters').style.display = fo.length ? 'flex' : 'none';
 
-    var rows = rowsFor(tab);
-    $('count').textContent = '共 ' + rows.length + ' 条' + (kw ? '（搜索：' + kw + '）' : '') +
-      (fv ? '（筛选：' + (fo.filter(function (o) { return o[0] === fv; })[0] || ['', ''])[1] + '）' : '');
-    var kindMap = { mon: 'mon', equip: 'equip', item: 'item', skill: 'skill', set: 'set', map: 'map', buff: 'buff' };
+    // 第一行：大类 + 排序
+    var f1 = F1[S.tab] || [];
+    var sortList = SORTS[S.tab].map(function (s) { return { id: s[0], label: s[1] }; });
+    $('fa').innerHTML =
+      (f1.length ? f1.map(function (o) {
+        return '<button class="chip' + (S.g1 === o.id ? ' on' : '') + '" data-f1="' + esc(o.id) + '">' + esc(o.label) + '</button>';
+      }).join('') + (SORTS[S.tab].length > 1 ? '<span class="sep"></span>' : '') : '') +
+      (SORTS[S.tab].length > 1 ? sortList.map(function (o) {
+        return '<button class="chip sml' + ((S.sort || SORTS[S.tab][0][0]) === o.id ? ' on' : '') +
+          '" data-sort="' + esc(o.id) + '">' + esc(o.label) + '</button>';
+      }).join('') + '<span class="sep"></span>' : '');
+    if (S.tab === 'equip') {
+      $('fa').innerHTML += '<button class="chip sml' + (S.merge ? ' on' : '') + '" data-merge="1">合并同款</button>';
+    }
+    $('fa').style.display = $('fa').innerHTML ? '' : 'none';
+
+    // 第二行：细分 + 等级段
+    var f2 = f2Options();
+    var lvList = [{ id: '', label: '全部等级' }].concat(BANDS.map(function (b) { return { id: b[0], label: 'Lv' + b[0] }; }));
+    var hasLv = ['mon', 'equip', 'item', 'skill', 'map'].indexOf(S.tab) >= 0;
+    if (!f2.length && !hasLv) {
+      $('fb').style.display = hasLv ? 'flex' : 'none';
+      $('fb').innerHTML = hasLv ? chipsHtml(lvList, S.lv, 'data-lv') : '';
+    } else {
+      $('fb').style.display = 'flex';
+      $('fb').innerHTML = (f2.length ? f2.map(function (o) {
+        return '<button class="chip sub' + (S.g2 === o.id ? ' on' : '') + '" data-f2="' + esc(o.id) + '">' + esc(o.label) + '</button>';
+      }).join('') + (hasLv ? '<span class="sep"></span>' : '') : '') +
+        (hasLv ? chipsHtml(lvList, S.lv, 'data-lv') : '');
+    }
+
+    // 列表
+    var rows = rowsFor(S.tab);
+    var total = rows.reduce(function (a, r) { return a + (r.vs ? r.vs.length : 1); }, 0);
+    var head = (S.tab === 'equip' && S.merge)
+      ? '共 ' + rows.length + ' 款（' + total + ' 条含强化变体）'
+      : '共 ' + rows.length + ' 项';
+    $('count').textContent = head + (S.kw ? '（搜索：' + S.kw + '）' : '');
     $('grid').innerHTML = rows.length
-      ? rows.map(function (o) { return card(kindMap[tab], o); }).join('')
+      ? rows.map(function (r) { return card(S.tab, r); }).join('')
       : '<div class="empty">没有匹配的条目</div>';
     window.scrollTo({ top: 0 });
+  }
+  function chipsHtml(list, cur, attr) {
+    return list.map(function (o) {
+      return '<button class="chip sml' + (cur === o.id ? ' on' : '') + '" ' + attr + '="' + esc(o.id) + '">' +
+        esc(o.label) + '</button>';
+    }).join('');
   }
 
   // ---------- 详情 ----------
@@ -279,9 +439,7 @@
     return '<div class="kv">' + pairs.filter(function (p) { return p[1] != null && p[1] !== ''; })
       .map(function (p) { return '<span><i>' + esc(p[0]) + '</i><b>' + p[1] + '</b></span>'; }).join('') + '</div>';
   }
-  function sec(title, body) {
-    return body ? '<div class="sec"><h3>' + title + '</h3>' + body + '</div>' : '';
-  }
+  function sec(title, body) { return body ? '<div class="sec"><h3>' + title + '</h3>' + body + '</div>' : ''; }
   function statBox(stats) {
     if (!stats) return '';
     return kv(Object.keys(stats).map(function (k) { return [statName(k), statVal(k, stats[k])]; }));
@@ -291,8 +449,24 @@
       (img ? '<img src="' + esc(img) + '" loading="lazy" alt="">' : '') +
       '<span>' + esc(name) + '</span><span class="g">' + (right || '') + '</span></div>';
   }
-
-  function dropSection(gid, monName) {
+  function effLine(e) {
+    if (!e) return '';
+    if (e.desc) return e.desc;
+    if (e.type === 'learnCollectSkill') return '学会对应技能，成功率 ' + pct(e.chance);
+    if (e.type === 'buff') {
+      return (e.label || '作用') + '：' + (e.stats || []).map(statName).join('、') + ' ' +
+        (e.mode === 'percent' ? '+' + (num(e.value) * 100).toFixed(0) + '%' : '+' + num(e.value)) +
+        (e.duration ? '，持续 ' + Math.round(num(e.duration) / 60) + ' 分钟' : '');
+    }
+    return (e.name || e.type || '效果') + (e.chance != null ? '（' + pct(e.chance) + '）' : '');
+  }
+  function effSection(eff) {
+    if (!eff || !eff.length) return '';
+    return sec('特殊效果', eff.map(function (e) {
+      return '<div class="desc" style="margin-bottom:6px">▸ ' + esc(effLine(e)) + '</div>';
+    }).join(''));
+  }
+  function dropSection(gid) {
     var rows = groups[gid] || [], pools = gpool[gid] || [];
     if (!rows.length) return '';
     var ind = rows.filter(function (r) { return !r[5]; });
@@ -311,15 +485,13 @@
     Object.keys(byPool).forEach(function (pname) {
       var ps = null;
       for (var i = 0; i < pools.length; i++) { if (pools[i][0] === pname) ps = pools[i]; }
-      var meta = ps ? ('整池 ' + prob(ps[1]) + '，池内 ' + ps[2] + ' 件随机 1 件') : '';
-      html += '<div class="pool">' + esc(poolName(pname)) + ' · ' + meta + '</div><table><tbody>' +
-        byPool[pname].map(function (r) {
+      html += '<div class="pool">' + esc(poolName(pname)) + (ps ? ' · 整池 ' + prob(ps[1]) + '，池内 ' + ps[2] + ' 件随机 1 件' : '') +
+        '</div><table><tbody>' + byPool[pname].map(function (r) {
           var nm = (itemById[r[0]] || {}).n || r[0];
           return '<tr><td>' + esc(nm) + '</td><td class="src-prob">' + prob(r[1]) +
             '</td><td class="n">' + (r[4] ? num2(r[4]) + '金' : '—') + '</td></tr>';
         }).join('') + '</tbody></table>';
     });
-    // 未单列的池
     var shown = Object.keys(byPool);
     var other = pools.filter(function (p) { return shown.indexOf(p[0]) < 0; });
     if (other.length) {
@@ -328,32 +500,11 @@
     }
     return sec('掉落', html);
   }
-
   function srcSection(src) {
     if (!src || !src.length) return '';
     return sec('掉落来源', src.map(function (s) {
       var m = monById[s[0]] || {};
       return linkRow('mon', s[0], m.n || s[0], prob(s[1]) + ' · ' + (s[2] === s[3] ? s[2] : s[2] + '~' + s[3]) + '件', m.img);
-    }).join(''));
-  }
-
-  function pct(v) { return v == null ? '—' : (num(v) * 100).toFixed(0) + '%'; }
-  function effLine(e) {
-    if (!e) return '';
-    if (e.desc) return e.desc;
-    var c = e.chance != null ? '（' + pct(e.chance) + '）' : '';
-    if (e.type === 'learnCollectSkill') return '学会对应技能，成功率 ' + pct(e.chance);
-    if (e.type === 'buff') {
-      return (e.label || '作用') + '：' + (e.stats || []).map(statName).join('、') + ' ' +
-        (e.mode === 'percent' ? '+' + (num(e.value) * 100).toFixed(0) + '%' : '+' + num(e.value)) +
-        (e.duration ? '，持续 ' + Math.round(num(e.duration) / 60) + ' 分钟' : '');
-    }
-    return (e.name || e.type || '效果') + c;
-  }
-  function effSection(eff) {
-    if (!eff || !eff.length) return '';
-    return sec('特殊效果', eff.map(function (e) {
-      return '<div class="desc" style="margin-bottom:6px">▸ ' + esc(effLine(e)) + '</div>';
     }).join(''));
   }
 
@@ -363,7 +514,7 @@
       o = monById[id]; if (!o) return;
       ico2 = o.img; name = o.n;
       var areas = areasOf(o).map(function (aid) { return mapById[aid]; });
-      sub = (areas.length ? areas.map(function (mp) { return mp.n; }).join(' / ') : '未挂图') + ' · Lv' + (o.lv || '?');
+      sub = (areas.length ? areas.map(function (p) { return p.n; }).join(' / ') : '未挂图') + ' · Lv' + (o.lv || '?');
       body = sec('基础', kv([
         ['等级', o.lv], ['生命', num2(o.hp)], ['魔法', num2(o.mp)],
         ['攻击', o.a1 != null ? num2(o.a1) + '~' + num2(o.a2) : null],
@@ -377,15 +528,23 @@
         ['伤害浮动', o.dv ? '±' + (o.dv * 100).toFixed(0) + '%' : null],
         ['攻击目标数', o.tar], ['刷新权重', o.w], ['经验', num2(o.exp)]
       ])) +
-        (areas.length ? sec('出现地图', areas.map(function (mp) {
-          return linkRow('map', mp.id, mp.n, 'Lv' + (mp.lo || '?') + '~' + (mp.hi || '?'));
+        (areas.length ? sec('出现地图', areas.map(function (p) {
+          return linkRow('map', p.id, p.n, 'Lv' + (p.lo || '?') + '~' + (p.hi || '?'));
         }).join('')) : '') +
-        dropSection(o.g, o.n);
+        dropSection(o.g);
     } else if (kind === 'equip' || kind === 'item') {
       o = itemById[id]; if (!o) return;
       ico2 = o.img; name = o.n;
-      sub = (TYPE[o.t] || '') + (slots(o).length ? ' · ' + slotNames(o) : '') +
+      sub = (TYPE[o.t] || '') + (o.wt ? ' · ' + o.wt : (slots(o).length ? ' · ' + slotNames(o) : '')) +
         (o.rare ? ' · 稀有' : '') + (o.set ? ' · 套装' : '');
+      var same = [];
+      if (o.t === 'equipment') {
+        same = D.items.filter(function (x) {
+          return x.t === 'equipment' && baseName(x) === baseName(o) && slots(x).join(',') === slots(o).join(',');
+        }).sort(function (a, b) {
+          return (num(a.req && a.req.level) || 0) - (num(b.req && b.req.level) || 0);
+        });
+      }
       body = sec('基础', kv([
         ['类型', TYPE[o.t] || o.t], ['子类', o.st], ['槽位', slotNames(o) || null],
         ['武器类型', o.wt], ['需求等级', o.req && o.req.level],
@@ -399,13 +558,17 @@
         (o.pz ? sec('拼图词条', kv([['词条', statName(o.pz)], ['等级', o.pzl]])) : '') +
         effSection(o.eff) +
         (o.set && setById[o.set] ? sec('所属套装', linkRow('set', o.set, setById[o.set].n, o.set)) : '') +
+        (same.length > 1 ? sec('同款强化等级（' + same.length + '）', same.map(function (x) {
+          return linkRow('equip', x.id, x.n, (x.req && x.req.level ? 'Lv' + x.req.level : '') +
+            (x.sell ? ' · ' + num2(x.sell) + '金' : ''), x.img);
+        }).join('')) : '') +
         srcSection(o.src);
     } else if (kind === 'skill') {
       o = skillById[id]; if (!o) return;
       ico2 = o.img; name = o.n;
-      sub = (o.cls || []).map(function (c) { return CLS[c] || c; }).join('/') + ' · ' + (o.cat || '') +
+      sub = (o.cls || []).map(function (c) { return CLS[c] || c; }).join('/') + ' · ' + (SKTYPE[o.t] || '') +
         (o.wl && o.wl.length ? ' · ' + o.wl.join('/') : '');
-      var rows = o.lv.map(function (x) {
+      var rows2 = o.lv.map(function (x) {
         var dm = Array.isArray(x[5]) ? x[5].join('/') : x[5];
         return '<tr><td class="n">' + x[0] + '</td><td class="n">' + (x[1] || '—') + '</td><td class="n">' +
           (dm == null ? '—' : dm) + '</td><td class="n">' + (x[7] == null ? '—' : x[7] + 's') +
@@ -414,7 +577,7 @@
       body = sec('基础', kv([['职业', (o.cls || []).map(function (c) { return CLS[c] || c; }).join('/')],
       ['分类', o.cat], ['槽位', o.slot], ['武器限制', (o.wl || []).join('/')],
       ['最高等级', o.mx], ['伤害类型', (o.lv[0] || [])[6] === 'magic' ? '魔法' : '物理']])) +
-        sec('各级数据', '<table><thead><tr><th>等级</th><th>需等级</th><th>倍率</th><th>冷却</th><th>耗魔</th></tr></thead><tbody>' + rows + '</tbody></table>') +
+        sec('各级数据', '<table><thead><tr><th>等级</th><th>需等级</th><th>倍率</th><th>冷却</th><th>耗魔</th></tr></thead><tbody>' + rows2 + '</tbody></table>') +
         sec('说明', '<div class="desc">' + esc((o.lv[0] || [])[9] || '') + '</div>');
     } else if (kind === 'set') {
       o = setById[id]; if (!o) return;
@@ -429,7 +592,8 @@
     } else if (kind === 'map') {
       o = mapById[id]; if (!o) return;
       name = o.n; sub = (o.rn || '') + (o.rk ? ' · ' + (RK[o.rk] || o.rk) : '');
-      body = sec('基础', kv([['区服', o.rn], ['区域类型', RK[o.rk] || o.rk], ['等级段', (o.lo || '?') + '~' + (o.hi || '?')],
+      body = sec('基础', kv([['区服', o.rn], ['区域类型', RK[o.rk] || o.rk],
+      ['等级段', (o.lo || '?') + '~' + (o.hi || '?')],
       ['每波只数', (o.smin || 1) + '~' + (o.smax || 4)], ['怪物种类', (MONS_OF[o.id] || []).length]])) +
         sec('怪物', (MONS_OF[o.id] || []).map(function (mid) {
           var m = monById[mid] || {};
@@ -456,7 +620,6 @@
     $('mask').classList.add('on');
     $('sheet').classList.add('on');
   }
-
   function closeSheet() {
     $('mask').classList.remove('on');
     $('sheet').classList.remove('on');
@@ -466,14 +629,23 @@
   $('tabs').addEventListener('click', function (e) {
     var b = e.target.closest('[data-tab]');
     if (!b) return;
-    tab = b.getAttribute('data-tab'); fv = '';
+    S.tab = b.getAttribute('data-tab');
+    S.g1 = ''; S.g2 = ''; S.lv = ''; S.sort = '';
     render();
   });
-  $('filters').addEventListener('click', function (e) {
-    var b = e.target.closest('[data-f]');
-    if (!b) return;
-    fv = b.getAttribute('data-f');
-    render();
+  $('fa').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-f1]');
+    if (b) { S.g1 = b.getAttribute('data-f1'); S.g2 = ''; render(); return; }
+    var so = e.target.closest('[data-sort]');
+    if (so) { S.sort = so.getAttribute('data-sort'); render(); return; }
+    var mg = e.target.closest('[data-merge]');
+    if (mg) { S.merge = !S.merge; render(); return; }
+  });
+  $('fb').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-f2]');
+    if (b) { S.g2 = b.getAttribute('data-f2'); render(); return; }
+    var lv = e.target.closest('[data-lv]');
+    if (lv) { S.lv = lv.getAttribute('data-lv'); render(); }
   });
   $('grid').addEventListener('click', function (e) {
     var b = e.target.closest('.card');
@@ -493,14 +665,14 @@
     var v = this.value;
     $('clrq').style.display = v ? 'block' : 'none';
     clearTimeout(t);
-    t = setTimeout(function () { kw = v.trim(); render(); }, 160);
+    t = setTimeout(function () { S.kw = v.trim(); render(); }, 160);
   });
   $('clrq').addEventListener('click', function () {
-    $('q').value = ''; kw = ''; this.style.display = 'none'; render();
+    $('q').value = ''; S.kw = ''; this.style.display = 'none'; render();
   });
 
   // ---------- 启动 ----------
-  var n = D.meta && D.meta.n ? D.meta.n : {};
+  var n = (D.meta && D.meta.n) || {};
   $('meta').innerHTML = '怪物 ' + (n.m || 0) + ' · 物品 ' + (n.i || 0) + ' · 技能 ' + (n.s || 0) +
     '<br>套装 ' + (n.set || 0) + ' · 地图 ' + (n.map || 0) + ' · BUFF ' + (n.b || 0);
   render();
