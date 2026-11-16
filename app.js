@@ -81,6 +81,14 @@
     if (v >= 0.0001) return v.toFixed(4) + '%';
     return v.toExponential(2) + '%';
   }
+  function prob2(p) {
+    if (!isFinite(p) || p <= 0) return '—';
+    var v = p * 100;
+    if (v >= 1) return nf(v, 2) + '%';
+    if (v >= 0.01) return v.toFixed(3) + '%';
+    if (v >= 0.0001) return v.toFixed(4) + '%';
+    return v.toExponential(2) + '%';
+  }
   function pct(v) { return v == null ? '—' : (num(v) * 100).toFixed(0) + '%'; }
   function poolName(p) { return (POOL[p] || p) + '池'; }
   function slots(o) {
@@ -110,6 +118,101 @@
     areasOf(m).forEach(function (aid) { (MONS_OF[aid] = MONS_OF[aid] || []).push(m.id); });
   });
 
+  // ---------- 印章（拓印）基础 ----------
+  var IM = D.imprints || null;
+  var SEAL_PROP_IDS = ['yinzhang1', 'yinzhang2', 'yinzhang3', 'yinzhang4', 'yinzhang5',
+    'yinzhang_xiangrui', 'yinzhang_xiongsha', 'yinzhang_qiankun'];
+  var SEAL_TIER = { yinzhang1: 1, yinzhang2: 2, yinzhang3: 3, yinzhang4: 4, yinzhang5: 5 };
+  var SEAL_ROLE = {
+    yinzhang1: '一阶印章 · 普通词条', yinzhang2: '二阶印章 · 普通词条',
+    yinzhang3: '三阶印章 · 可出特殊词条', yinzhang4: '四阶印章 · 可出特殊词条',
+    yinzhang5: '五阶印章 · 可出特殊词条',
+    yinzhang_xiangrui: '特殊印章 · 圣兽权重 ×1.5',
+    yinzhang_xiongsha: '特殊印章 · 凶兽权重 ×1.5',
+    yinzhang_qiankun: '特殊印章 · 必出圣兽 / 凶兽'
+  };
+  var sealProbCache = null;
+
+  // 按客户端 Vp() 逻辑还原各阶权重与出现率
+  function sealProb() {
+    if (sealProbCache) return sealProbCache;
+    var res = {}, wp = (IM && IM.wp) || 1.5;
+    [1, 2, 3, 4, 5].forEach(function (tier) {
+      var nw = 0, sw = { shengshou: 0, xiongshou: 0 };
+      if (IM) {
+        IM.n.forEach(function (e) {
+          var has = (e.p || []).some(function (r) { return r[0] === tier; }) ||
+            (e.f || []).some(function (r) { return r[0] === tier; });
+          if (has) nw += (e.w || 100);
+        });
+        IM.s.forEach(function (e) {
+          var w = 0;
+          (e.rows || []).forEach(function (r) { if (r[0] === tier) w = r[1]; });
+          if (w) sw[e.gt] = (sw[e.gt] || 0) + w;
+        });
+      }
+      var m = {};
+      ['none', 'xiangrui', 'xiongsha', 'qiankun'].forEach(function (mode) {
+        var nh = mode === 'qiankun' ? 0 : nw;
+        var sh = sw.shengshou * (mode === 'xiangrui' ? wp : 1) +
+          sw.xiongshou * (mode === 'xiongsha' ? wp : 1);
+        var total = nh + sh;
+        m[mode] = { nh: nh, sh: sh, total: total, special: total > 0 ? sh / total : 0 };
+      });
+      res[tier] = { nw: nw, sw: sw, m: m };
+    });
+    sealProbCache = res;
+    return res;
+  }
+  function sealTotal(tier, mode) { return sealProb()[tier].m[mode].total; }
+  function normalOdds(tier, w, mode) {
+    if (mode === 'qiankun') return 0;
+    var t = sealTotal(tier, mode);
+    return t > 0 ? (w || 100) / t : 0;
+  }
+  function specialOdds(tier, w, gt, mode) {
+    var t = sealTotal(tier, mode);
+    if (!t || !w) return 0;
+    var w2 = (mode === 'xiangrui' && gt === 'shengshou') || (mode === 'xiongsha' && gt === 'xiongshou')
+      ? ((IM && IM.wp) || 1.5) : 1;
+    return (w * w2) / t;
+  }
+  function tRow(rows, tier) {
+    for (var i = 0; i < (rows || []).length; i++) { if (rows[i][0] === tier) return rows[i]; }
+    return null;
+  }
+  function rgN(a, b) { return a === b ? nf(a) : nf(a) + '~' + nf(b); }
+  function flatTxt(f) { return f ? (f[1] === f[2] ? '+' + nf(f[1]) : '+' + nf(f[1]) + '~' + nf(f[2])) : ''; }
+  function pctTxt(p) { return p ? (p[1] === p[2] ? nf(p[1]) + '%' : nf(p[1]) + '~' + nf(p[2]) + '%') : ''; }
+  function normTxt(e, tier) {
+    var four = tRow(e.f, tier), np = tRow(e.p, tier);
+    return [flatTxt(four), pctTxt(np)].filter(Boolean).join(' / ') || '—';
+  }
+  function specValTxt(e, r) {
+    if (!r) return '—';
+    var v = pctTxt([0, r[3], r[4]]), c = r[2] == null ? null : nf(r[2]) + '%';
+    if (e.tp === 'zhuque') return '触发 ' + c + ' · 每秒 ' + v + ' · ' + (r[5] || 3) + ' 秒';
+    if (e.tp === 'shieldOnAttack') return '触发 ' + c + ' · 护盾 ' + v;
+    if (e.tp === 'highHpDamageBonus') return '血量 > ' + nf(r[6]) + '% · +' + v;
+    return '+' + v;
+  }
+  function sealSource() {
+    if (!IM) return [];
+    var out = [];
+    SEAL_PROP_IDS.forEach(function (pid) {
+      var it = itemById[pid];
+      if (!it) return;
+      out.push({ id: pid, n: it.n, sk: 'prop', img: it.img, item: it });
+    });
+    (IM.n || []).forEach(function (e) {
+      out.push({ id: 'n:' + e.k, n: e.n, sk: 'normal', s: e.s, w: e.w, f: e.f, p: e.p });
+    });
+    (IM.s || []).forEach(function (e) {
+      out.push({ id: 's:' + e.k, n: e.n, sk: 'special', gn: e.gn, gt: e.gt, tp: e.tp, d: e.d, rows: e.rows });
+    });
+    return out;
+  }
+
   // ---------- 分类 ----------
   var TABS = [
     { k: 'mon', n: '怪物', c: D.mons.length },
@@ -118,7 +221,12 @@
     { k: 'skill', n: '技能', c: D.skills.length },
     { k: 'set', n: '套装', c: D.sets.length },
     { k: 'map', n: '地图', c: D.maps.length },
-    { k: 'buff', n: '药水BUFF', c: D.buffs.length }
+    { k: 'buff', n: '药水BUFF', c: D.buffs.length },
+    {
+      k: 'seal', n: '印章',
+      c: D.imprints ? (SEAL_PROP_IDS.filter(function (x) { return itemById[x]; }).length +
+        D.imprints.n.length + D.imprints.s.length) : 0
+    }
   ];
   var S = { tab: 'mon', kw: '', g1: '', g2: '', lv: '', sort: '', merge: true };
 
@@ -160,7 +268,9 @@
     skill: [{ id: '', label: '全部职业' }].concat(Object.keys(CLS).map(function (c) { return { id: c, label: CLS[c] }; })),
     map: [{ id: '', label: '全部区域' }, { id: 'field', label: '野外' },
       { id: 'boss', label: '领主' }, { id: 'dungeon', label: '副本' }],
-    set: [], buff: []
+    set: [], buff: [],
+    seal: [{ id: '', label: '全部' }, { id: 'prop', label: '印章道具' },
+      { id: 'normal', label: '普通词条' }, { id: 'special', label: '特殊词条' }]
   };
 
   function f2Options() {
@@ -202,7 +312,8 @@
     skill: [['lv+', '等级升序'], ['lv-', '等级降序'], ['name', '名称']],
     set: [['name', '名称']],
     map: [['lv+', '等级升序'], ['lv-', '等级降序'], ['name', '名称']],
-    buff: [['name', '名称']]
+    buff: [['name', '名称']],
+    seal: [['def', '默认'], ['name', '名称'], ['odds', '出率从高到低']]
   };
 
   function levelOf(k, o) {
@@ -224,7 +335,9 @@
   function matchKw(o) {
     if (!S.kw) return true;
     var q = S.kw.toLowerCase();
-    return String(o.n || '').toLowerCase().indexOf(q) >= 0 || String(o.id).toLowerCase().indexOf(q) >= 0;
+    var txt = String(o.n || '') + ' ' + String(o.id || '') + ' ' +
+      String(o.s || '') + ' ' + String(o.gn || '') + ' ' + String(o.d || '') + ' ' + String(o.tp || '');
+    return txt.toLowerCase().indexOf(q) >= 0;
   }
 
   function passRow(k, o) {
@@ -263,6 +376,10 @@
       if (S.g1 && o.rk !== S.g1) return false;
       return true;
     }
+    if (k === 'seal') {
+      if (S.g1 && o.sk !== S.g1) return false;
+      return true;
+    }
     return true;
   }
 
@@ -270,17 +387,28 @@
     var key = S.sort || SORTS[k][0][0];
     rows.sort(function (a, b) {
       var oa = a.o, ob = b.o;
-      if (key === 'lv+' || key === 'lv-') {
-        var la = levelOf(k, oa), lb = levelOf(k, ob);
+      if (key === 'lv+' || key === 'lv-') {        var la = levelOf(k, oa), lb = levelOf(k, ob);
         var d = (la == null ? -1 : la) - (lb == null ? -1 : lb);
         return key === 'lv+' ? d : -d;
       }
       if (key === 'name') return String(oa.n || '').localeCompare(String(ob.n || ''), 'zh');
       if (key === 'sell') return (num(ob.sell) || 0) - (num(oa.sell) || 0);
       if (key === 'exp') return (num(ob.exp) || 0) - (num(oa.exp) || 0);
+      if (key === 'odds') {
+        var pa = sealOddsOf(oa), pb = sealOddsOf(ob);
+        return pb - pa;
+      }
       return 0;
     });
     return rows;
+  }
+
+  function sealOddsOf(o) {
+    if (!o || o.sk === 'prop') return 0;
+    var top = o.sk === 'normal' ? 5 : (o.rows && o.rows.length ? o.rows[o.rows.length - 1][0] : 3);
+    if (o.sk === 'normal') return normalOdds(top, o.w, 'none');
+    var r = tRow(o.rows, top);
+    return r ? specialOdds(top, r[1], o.gt, 'none') : 0;
   }
 
   function groupEquip(list) {
@@ -306,13 +434,49 @@
     } else if (k === 'skill') src = D.skills;
     else if (k === 'set') src = D.sets;
     else if (k === 'map') src = D.maps;
+    else if (k === 'seal') src = sealSource();
     else src = D.buffs;
 
     rows = src.filter(function (o) { return passRow(k, o); })
       .map(function (o) { return { o: o, vs: null }; });
 
     if (k === 'equip' && S.merge) rows = groupEquip(rows.map(function (r) { return r.o; }));
-    return sortRows(k, rows);
+    sortRows(k, rows);
+    if (k === 'seal' && !S.g1 && !S.kw && IM) {
+      rows.unshift({ o: { id: 'prob', n: '各阶出率与规则', sk: 'prob' }, vs: null });
+    }
+    return rows;
+  }
+
+  // ---------- 卡片：印章 ----------
+  function sealCard(o) {
+    var h = '', tags = '', sub = '', nm = esc(o.n);
+    if (o.sk === 'prop') {
+      h = ico(o.img);
+      var tier = SEAL_TIER[o.id];
+      var sp = tier ? sealProb()[tier].m.none.special : 0;
+      sub = (o.item.sell ? num2(o.item.sell) + '金' : '') + ' · ' +
+        (o.id === 'yinzhang_xiangrui' ? '圣兽×1.5'
+          : o.id === 'yinzhang_xiongsha' ? '凶兽×1.5'
+            : o.id === 'yinzhang_qiankun' ? '必出特殊'
+              : (tier <= 2 ? '仅普通词条' : '特殊 ' + prob(sp)));
+    } else if (o.sk === 'normal') {
+      h = '<div class="ico ph">印</div>';
+      tags = '<span class="tag">普通</span>';
+      var top5 = tRow(o.f, 5);
+      sub = o.s + ' · 五阶 ' + (flatTxt(top5) || pctTxt(tRow(o.p, 5)));
+    } else if (o.sk === 'special') {
+      h = '<div class="ico ph">印</div>';
+      tags = '<span class="tag ' + (o.gt === 'shengshou' ? 'rare' : 'nx') + '">' + esc(o.gn) + '</span>';
+      var top = o.rows[o.rows.length - 1];
+      sub = 'T' + top[0] + ' ' + specValTxt(o, top);
+    } else {
+      h = '<div class="ico ph">率</div>';
+      var p3 = sealProb()[3].m.none.special, p4 = sealProb()[4].m.none.special;
+      sub = 'T3 ' + prob(p3) + ' / T4 ' + prob(p4) + ' / T5 ' + prob(sealProb()[5].m.none.special);
+    }
+    return '<button class="card" data-k="seal" data-id="' + esc(o.id) + '">' + h +
+      '<div class="c1"><div class="nm">' + tags + nm + '</div><div class="sub">' + esc(sub) + '</div></div></button>';
   }
 
   // ---------- 卡片 ----------
@@ -321,6 +485,7 @@
     return '<img class="ico" src="' + esc(src) + '" loading="lazy" decoding="async" alt="">';
   }
   function card(kind, row) {
+    if (kind === 'seal') return sealCard(row.o);
     var o = row.o, vs = row.vs && row.vs.length > 1 ? row.vs.length : 0;
     var h = '', sub = '', tags = '', nm = esc(o.n || o.id);
     if (kind === 'mon') {
@@ -510,6 +675,7 @@
 
   function detail(kind, id) {
     var o, ico2 = '', name = '', sub = '', body = '';
+    if (kind === 'seal') { detailSeal(id); return; }
     if (kind === 'mon') {
       o = monById[id]; if (!o) return;
       ico2 = o.img; name = o.n;
@@ -611,6 +777,9 @@
         srcSection((itemById[o.id] || {}).src);
     }
 
+    openSheet(ico2, name, sub, body);
+  }
+  function openSheet(ico2, name, sub, body) {
     $('shIco').src = ico2 || 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
     $('shIco').style.visibility = ico2 ? 'visible' : 'hidden';
     $('shName').textContent = name;
@@ -619,6 +788,109 @@
     $('shBody').scrollTop = 0;
     $('mask').classList.add('on');
     $('sheet').classList.add('on');
+  }
+
+  // ---------- 详情：印章 ----------
+  function sealedTable(head, rows) {
+    return '<table class="sw"><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+  function detailSeal(id) {
+    if (!IM) { openSheet('', '印章', '', '<div class="desc">暂无印章数据</div>'); return; }
+    if (id === 'prob') {
+      var head1 = sealedTable(['阶', '无特殊', '祥瑞', '凶煞', '乾坤'],
+        [1, 2, 3, 4, 5].map(function (t) {
+          var p = sealProb()[t];
+          var qk = (p.sw.shengshou + p.sw.xiongshou) ? '100%' : '—';
+          return '<tr><td class="n">T' + t + '</td><td class="n src-prob">' + prob(p.m.none.special) +
+            '</td><td class="n">' + prob(p.m.xiangrui.special) +
+            '</td><td class="n">' + prob(p.m.xiongsha.special) +
+            '</td><td class="n">' + qk + '</td></tr>';
+        }).join(''));
+      var head2 = sealedTable(['阶', '无特殊', '祥瑞', '凶煞'],
+        [1, 2, 3, 4, 5].map(function (t) {
+          return '<tr><td class="n">T' + t + '</td><td class="n">' + prob2(normalOdds(t, 100, 'none')) +
+            '</td><td class="n">' + prob2(normalOdds(t, 100, 'xiangrui')) +
+            '</td><td class="n">' + prob2(normalOdds(t, 100, 'xiongsha')) + '</td></tr>';
+        }).join(''));
+      openSheet('', '各阶出率与规则', IM.ver || '拓印系统',
+        sec('特殊词条出现率（每次拓印）', head1 +
+          '<div class="desc" style="margin-top:6px">一、二阶没有特殊词条池，所以乾坤印章在一、二阶实际用不上；' +
+          '「乾坤」会把普通词条权重清零，抽到即必为圣兽或凶兽。</div>') +
+        sec('普通词条单条出现率', head2) +
+        sec('规则', '<div class="desc">' + IM.rule.map(function (r, i) {
+          return (i + 1) + '. ' + esc(r);
+        }).join('<br>') + '</div>') +
+        sec('数据来源', '<div class="desc">权重与区间取自游戏静态表 imprint_normal / imprint_special，' +
+          '概率按客户端 Vp() 权重抽取逻辑计算（祥瑞/凶煞为对应组权重 ×1.5）。</div>'));
+      return;
+    }
+    if (id.indexOf('n:') === 0) {
+      var key = id.slice(2), e = null;
+      IM.n.forEach(function (x) { if (x.k === key) e = x; });
+      if (!e) { openSheet('', id, '', '<div class="desc">未找到该词条</div>'); return; }
+      var hasFlat = (e.f || []).length > 0;
+      var rowsN = [1, 2, 3, 4, 5].map(function (t) {
+        var f = tRow(e.f, t), p = tRow(e.p, t);
+        return '<tr><td class="n">T' + t + '</td><td class="n">' + (flatTxt(f) || '—') +
+          '</td><td class="n">' + (pctTxt(p) || '—') +
+          '</td><td class="n src-prob">' + prob2(normalOdds(t, e.w, 'none')) + '</td></tr>';
+      }).join('');
+      openSheet('', e.n, '普通词条 · ' + e.s + (hasFlat ? ' · 固定值 + 百分比' : ' · 仅百分比'),
+        sec('基础', kv([['属性', e.s], ['类型', hasFlat ? '固定值 + 百分比' : '仅百分比'],
+        ['权重', e.w], ['可用阶', '一阶 ~ 五阶']])) +
+        sec('各阶数值', sealedTable(['阶', '固定值', '百分比', '单条出现率'], rowsN) +
+          '<div class="desc" style="margin-top:6px">出现率按无特殊印章计算；带祥瑞/凶煞时普通池被摊薄，' +
+          '单条降至 ' + prob2(normalOdds(3, 100, 'xiangrui')) + '（三阶） / ' +
+          prob2(normalOdds(4, 100, 'xiangrui')) + '（四阶） / ' +
+          prob2(normalOdds(5, 100, 'xiangrui')) + '（五阶）左右。</div>') +
+        sec('数值粒度', '<div class="desc">固定值为整数；百分比 0.01% 一跳，在区间内等概率随机。</div>'));
+      return;
+    }
+    if (id.indexOf('s:') === 0) {
+      var sk = id.slice(2), se = null;
+      IM.s.forEach(function (x) { if (x.k === sk) se = x; });
+      if (!se) { openSheet('', id, '', '<div class="desc">未找到该词条</div>'); return; }
+      var wsum = se.rows.map(function (r) { return 'T' + r[0] + ' ' + r[1]; }).join(' / ');
+      var rowsS = se.rows.map(function (r) {
+        var good = se.gt === 'shengshou' ? 'xiangrui' : 'xiongsha';
+        return '<tr><td class="n">T' + r[0] + '</td><td class="n">' + r[1] +
+          '</td><td>' + esc(specValTxt(se, r)) +
+          '</td><td class="n src-prob">' + prob2(specialOdds(r[0], r[1], se.gt, 'none')) +
+          '</td><td class="n">' + prob2(specialOdds(r[0], r[1], se.gt, good)) + '</td></tr>';
+      }).join('');
+      var dTxt = (se.d || '').replace('{v}', pctTxt([0, se.rows[se.rows.length - 1][3], se.rows[se.rows.length - 1][4]]))
+        .replace('{chance}', (se.rows[se.rows.length - 1][2] == null ? '—' : nf(se.rows[se.rows.length - 1][2]) + '%'))
+        .replace('{th}', se.rows[se.rows.length - 1][6] == null ? '—' : nf(se.rows[se.rows.length - 1][6]) + '%')
+        .replace('{dur}', se.rows[se.rows.length - 1][5] || 3);
+      openSheet('', se.n, se.gn + ' · 仅三阶及以上',
+        sec('基础', kv([['类别', se.gn], ['可用阶', '三阶 ~ 五阶'],
+        ['顶阶数值', specValTxt(se, se.rows[se.rows.length - 1])]])) +
+        sec('效果说明（五阶数值）', '<div class="desc">' + esc(dTxt) + '</div>') +
+        sec('各阶数值与出现率', sealedTable(['阶', '权重', '效果', '无特殊', (se.gt === 'shengshou' ? '祥瑞' : '凶煞')], rowsS)) +
+        (se.tp === 'chaos' ? sec('随机项', '<div class="desc">每次拓印在 命中率 / 闪避率 / 暴击率 / 暴击伤害 中随机 1 项的数值。</div>') : ''));
+      return;
+    }
+    var it = itemById[id];
+    if (!it) { openSheet('', id, '', '<div class="desc">未找到该印章</div>'); return; }
+    var tier = SEAL_TIER[id];
+    var extra = '';
+    if (tier) {
+      var pt = sealProb()[tier];
+      extra = sec('该阶出率', kv([
+        ['普通词条单条', prob2(normalOdds(tier, 100, 'none'))],
+        ['特殊总出现率', tier >= 3 ? prob(pt.m.none.special) : '该阶无特殊词条']
+      ]) + (tier >= 3 ? '<div class="desc" style="margin-top:6px">带祥瑞 ' +
+        prob(pt.m.xiangrui.special) + '，带凶煞 ' + prob(pt.m.xiongsha.special) + '，带乾坤 100%。</div>' : ''));
+    } else {
+      extra = sec('作用', '<div class="desc">' + esc(SEAL_ROLE[id] || '') +
+        '；三阶及以上装备才能用它抽到特殊词条，概率见「印章 → 各阶出率与规则」。</div>');
+    }
+    openSheet(it.img, it.n, '印章道具 · ' + (SEAL_ROLE[id] || ''),
+      sec('基础', kv([['类型', TYPE[it.t] || it.t], ['卖价', it.sell ? num2(it.sell) + ' 金' : null],
+      ['堆叠上限', it.mx], ['来源', '分解装备可得']])) +
+      (it.d ? sec('说明', '<div class="desc">' + esc(it.d) + '</div>') : '') +
+      extra);
   }
   function closeSheet() {
     $('mask').classList.remove('on');
@@ -674,6 +946,7 @@
   // ---------- 启动 ----------
   var n = (D.meta && D.meta.n) || {};
   $('meta').innerHTML = '怪物 ' + (n.m || 0) + ' · 物品 ' + (n.i || 0) + ' · 技能 ' + (n.s || 0) +
-    '<br>套装 ' + (n.set || 0) + ' · 地图 ' + (n.map || 0) + ' · BUFF ' + (n.b || 0);
+    '<br>套装 ' + (n.set || 0) + ' · 地图 ' + (n.map || 0) + ' · BUFF ' + (n.b || 0) +
+    (D.imprints ? ' · 印章词条 ' + (D.imprints.n.length + D.imprints.s.length) : '');
   render();
 })();

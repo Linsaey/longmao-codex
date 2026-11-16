@@ -6,7 +6,7 @@
 import json, io, os, collections
 from PIL import Image
 
-SRC_DATA = r"C:\Temp\g4data"
+SRC_DATA = r"C:\Temp\g4data2" if os.path.exists(r"C:\Temp\g4data2\monsters.json") else r"C:\Temp\g4data"
 SRC_IMG = r"C:\Temp\imgcache"
 IDX = r"C:\Temp\imgindex.json"
 OUT = r"E:\Software Development\Software Development\longmao-codex"
@@ -199,6 +199,67 @@ for i in items:
                   "s": st, "m": mode, "v": val, "t": dur,
                   "img": path2file.get(i.get("image")), "sell": i.get("sellPrice")})
 
+# ---------- 9. 印章（拓印） ----------
+# 权重抽取逻辑见客户端 Vp()：普通词条每阶权重 100，特殊词条按 tier 取权重；
+# 祥瑞把圣兽组权重 ×wp、凶煞把凶兽组 ×wp、乾坤把普通权重清零。
+STAT_LABEL = {
+    "strength": "力量", "magic": "魔力", "vitality": "体力", "luck": "幸运",
+    "maxAttack": "最大攻击力", "maxMagicAttack": "最大魔法攻击力",
+    "defense": "防御力", "magicResist": "魔法抗性", "hitRate": "命中率",
+    "dodgeRate": "闪避率", "attackSpeed": "攻击速度", "moveSpeed": "移动速度",
+    "goldRate": "金币获取", "expMultiplier": "经验获取",
+    "critRate": "暴击率", "critDamage": "暴击伤害",
+}
+SPEC_META = {
+    "zhuque": "造成伤害时，有 {chance} 概率使敌人每秒受到该次伤害的 {v} 真实伤害，持续 {dur} 秒",
+    "defenseIgnoreRate": "无视目标 {v} 防御与抗性",
+    "damageBonus": "造成的总伤害提高 {v}",
+    "damageTakenReduce": "受到的伤害减少 {v}",
+    "cooldownHaste": "技能极速提高 {v}",
+    "potionHealBonus": "药品恢复量提高 {v}",
+    "highHpDamageBonus": "对血量高于 {th} 的目标造成的伤害提高 {v}",
+    "shieldOnAttack": "攻击时有 {chance} 概率获得 {v} 最大生命值的护盾（护盾不可叠加）",
+    "chaos": "随机获得「命中率 / 闪避率 / 暴击率 / 暴击伤害」中的 1 项 +{v}",
+}
+GN = {"shengshou": "圣兽", "xiongshou": "凶兽"}
+RULES = [
+    "分解装备可获得装备印章；印章按阶数区分，阶数越高数值越好（一阶~五阶，另有三枚特殊印章）。",
+    "拓印时随机抽 1 条词条 + 随机数值；普通词条各阶都有，特殊词条仅三阶及以上可用。",
+    "每件装备最多保留 1 条拓印属性；拓印后可选择保留新属性或旧属性。",
+    "拓印必定成功，每次消耗 1 点装备耐久，耐久归 0 无法拓印；上锁装备不可拓印。",
+    "特殊印章：祥瑞（圣兽权重 ×1.5）、凶煞（凶兽权重 ×1.5）、乾坤（普通词条权重清零，必出圣兽/凶兽）。",
+    "数值粒度：百分比 0.01% 一跳（源码步长 1e-4），固定值整数。",
+]
+IMPRINT = None
+try:
+    import re
+    norm_rows, spec_rows = L("imprint_normal"), L("imprint_special")
+    lbl = lambda k: STAT_LABEL.get(re.sub(r"Percent$", "", str(k)), str(k))
+    normal, special = {}, {}
+    for r in norm_rows:
+        e = normal.setdefault(r["key"], {"k": r["key"], "n": r["name"],
+                                        "w": int(r.get("weight") or 100), "s": None, "f": [], "p": []})
+        if r.get("flatStat") and r.get("flatMin") is not None:
+            e["s"] = lbl(r["flatStat"])
+            e["f"].append([int(r["tier"]), r["flatMin"], r["flatMax"]])
+        if r.get("percentStat") and r.get("percentMin") is not None:
+            e["s"] = e["s"] or lbl(r["percentStat"])
+            e["p"].append([int(r["tier"]), round(r["percentMin"] * 100, 4), round(r["percentMax"] * 100, 4)])
+    for r in spec_rows:
+        e = special.setdefault(r["key"], {"k": r["key"], "n": r["name"], "gt": r.get("group"),
+                                         "gn": GN.get(r.get("group"), r.get("group")), "tp": r.get("type"),
+                                         "d": SPEC_META.get(r.get("type"), ""), "rows": []})
+        e["rows"].append([int(r["tier"]), int(r.get("weight") or 0),
+                          None if r.get("chance") is None else round(r["chance"] * 100, 4),
+                          round(r["min"] * 100, 4), round(r["max"] * 100, 4),
+                          r.get("duration"), None if r.get("threshold") is None else round(r["threshold"] * 100, 4),
+                          (r.get("statList") or None)])
+    ORDER = ["zhuque", "qinglong", "baihu", "xuanwu", "qilin", "taotie", "qiongqi", "taowu", "hundun"]
+    IMPRINT = {"ver": "游戏 2026.11.15 新增拓印系统", "wp": 1.5,
+               "n": list(normal.values()), "s": [special[k] for k in ORDER if k in special], "rule": RULES}
+except Exception as e:
+    print("印章表缺失，跳过:", e)
+
 DATA = {
     "meta": {"builtAt": "2026-11-16", "src": "43.142.100.84:8080",
              "n": {"m": len(MONS), "i": len(ITEMS), "s": len(SKILLS),
@@ -207,6 +268,9 @@ DATA = {
     "maps": MAPS, "mons": MONS, "items": ITEMS, "skills": SKILLS, "sets": SETS,
     "buffs": BUFFS, "groups": GROUP, "gpool": POOLSUM,
 }
+if IMPRINT:
+    DATA["imprints"] = IMPRINT
+    DATA["meta"]["imprint"] = "2026-11-15 拓印系统"
 
 js = "window.CODEX=" + json.dumps(DATA, ensure_ascii=False, separators=(",", ":")) + ";\n"
 io.open(os.path.join(OUT, "data.js"), "w", encoding="utf-8", newline="\n").write(js)
