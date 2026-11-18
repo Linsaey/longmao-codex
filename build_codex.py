@@ -3,10 +3,10 @@
 - 图标压缩（怪物合成深色底 JPEG，物品 WEBP）
 - 掉落按 groupId 存一份，怪物/物品用紧凑数组引用（避免重复膨胀）
 """
-import json, io, os, collections
+import json, io, os, collections, datetime
 from PIL import Image
 
-SRC_DATA = r"C:\Temp\g4data2" if os.path.exists(r"C:\Temp\g4data2\monsters.json") else r"C:\Temp\g4data"
+SRC_DATA = os.environ.get("CODEX_DATA") or r"C:\Temp\g5data"
 SRC_IMG = r"C:\Temp\imgcache"
 IDX = r"C:\Temp\imgindex.json"
 OUT = r"E:\Software Development\Software Development\longmao-codex"
@@ -261,7 +261,7 @@ except Exception as e:
     print("印章表缺失，跳过:", e)
 
 DATA = {
-    "meta": {"builtAt": "2026-11-16", "src": "43.142.100.84:8080",
+    "meta": {"builtAt": datetime.date.today().isoformat(), "src": "43.142.100.84:8080",
              "n": {"m": len(MONS), "i": len(ITEMS), "s": len(SKILLS),
                    "set": len(SETS), "map": len(MAPS), "b": len(BUFFS)}},
     "regions": [{"id": r["id"], "n": r.get("name"), "k": r.get("kind")} for r in regions],
