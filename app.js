@@ -23,6 +23,7 @@
     physicalReduction: '物理减伤', magicReduction: '魔法减伤',
     critRate: '暴击率', critDamage: '暴击伤害', hitRate: '命中率', dodgeRate: '闪避率',
     attackSpeed: '攻速', moveSpeed: '移速', goldRate: '金币加成', expMultiplier: '经验倍率',
+    skillDamageBonus: '技能伤害', cooldownHaste: '技能极速', defenseIgnore: '无视防御',
     damageBonus: '伤害加成', damageMultiplier: '伤害倍率', physicalDamage: '物理伤害',
     magicDamage: '魔法伤害', hpRegen: '生命回复', mpRegen: '魔法回复',
     hpMax: '最大生命', mpMax: '最大魔法', attackRange: '攻击基数', attack: '攻击',
@@ -31,7 +32,7 @@
   var PCT = {
     critRate: 1, critDamage: 1, hitRate: 1, dodgeRate: 1, goldRate: 1, expMultiplier: 1,
     damageBonus: 1, moveSpeed: 1, attackSpeed: 1, physicalDamage: 1, magicDamage: 1,
-    damageMultiplier: 1, luckPercent: 1, percent: 1
+    damageMultiplier: 1, luckPercent: 1, percent: 1, skillDamageBonus: 1, cooldownHaste: 1
   };
   var RK = { field: '野外', boss: '领主', dungeon: '副本' };
   var POOL = {
@@ -518,7 +519,10 @@
     } else if (kind === 'set') {
       h = ico((itemById[o.items[0]] || {}).img);
       tags = '<span class="tag set">' + o.items.length + ' 件</span>';
-      sub = o.tiers.map(function (t) { return t[0] + '件'; }).join(' / ') + ' 效果';
+      sub = o.tiers.map(function (t) {
+        var txt = Object.keys(t[1] || {}).map(function (k) { return statName(k) + statVal(k, t[1][k]); }).join('、');
+        return t[0] + '件 ' + (txt || '—');
+      }).join(' · ');
     } else if (kind === 'map') {
       h = ico('', '地');
       tags = '<span class="tag">' + (RK[o.rk] || o.rk || '') + '</span>' +
@@ -531,7 +535,8 @@
         (o.v != null ? ' ' + (o.m === 'percent' ? '+' + nf(num(o.v) * 100) + '%' : '+' + num(o.v)) : '');
     }
     return '<button class="card" data-k="' + kind + '" data-id="' + esc(o.id) + '">' + h +
-      '<div class="c1"><div class="nm">' + tags + nm + '</div><div class="sub">' + esc(sub) + '</div></div></button>';
+      '<div class="c1"><div class="nm">' + tags + nm + '</div><div class="sub' +
+      (kind === 'set' ? ' set-sub' : '') + '">' + esc(sub) + '</div></div></button>';
   }
 
   // ---------- 渲染 ----------
@@ -748,9 +753,12 @@
     } else if (kind === 'set') {
       o = setById[id]; if (!o) return;
       ico2 = (itemById[o.items[0]] || {}).img; name = o.n; sub = o.items.length + ' 件';
-      body = sec('套装效果', o.tiers.map(function (t) {
-        return '<div class="pool">' + t[0] + ' 件</div>' + statBox(t[1]);
-      }).join('')) +
+      body = sec('套装效果', '<table><thead><tr><th>件数</th><th>加成</th></tr></thead><tbody>' +
+        o.tiers.map(function (t) {
+          var txt = Object.keys(t[1] || {}).map(function (k) { return statName(k) + statVal(k, t[1][k]); }).join('、');
+          return '<tr><td>' + t[0] + ' 件</td><td>' + esc(txt || '—') + '</td></tr>';
+        }).join('') + '</tbody></table>' +
+        '<div class="desc">集齐对应件数时生效；同档效果按套装表结算。</div>') +
         sec('套装物品', o.items.map(function (iid) {
           var it = itemById[iid] || {};
           return linkRow('equip', iid, it.n || iid, (slotNames(it) || '') + (it.req && it.req.level ? ' Lv' + it.req.level : ''), it.img);
