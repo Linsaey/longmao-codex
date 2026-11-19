@@ -23,6 +23,7 @@
     physicalReduction: '物理减伤', magicReduction: '魔法减伤',
     critRate: '暴击率', critDamage: '暴击伤害', hitRate: '命中率', dodgeRate: '闪避率',
     attackSpeed: '攻速', moveSpeed: '移速', goldRate: '金币加成', expMultiplier: '经验倍率',
+    dropRate: '掉宝率',
     skillDamageBonus: '技能伤害', cooldownHaste: '技能极速', defenseIgnore: '无视防御',
     damageBonus: '伤害加成', damageMultiplier: '伤害倍率', physicalDamage: '物理伤害',
     magicDamage: '魔法伤害', hpRegen: '生命回复', mpRegen: '魔法回复',
@@ -32,7 +33,7 @@
   var PCT = {
     critRate: 1, critDamage: 1, hitRate: 1, dodgeRate: 1, goldRate: 1, expMultiplier: 1,
     damageBonus: 1, moveSpeed: 1, attackSpeed: 1, physicalDamage: 1, magicDamage: 1,
-    damageMultiplier: 1, luckPercent: 1, percent: 1, skillDamageBonus: 1, cooldownHaste: 1
+    damageMultiplier: 1, luckPercent: 1, percent: 1, skillDamageBonus: 1, cooldownHaste: 1, dropRate: 1
   };
   var RK = { field: '野外', boss: '领主', dungeon: '副本' };
   var POOL = {
@@ -627,6 +628,12 @@
       return (e.label || '作用') + '：' + (e.stats || []).map(statName).join('、') + ' ' +
         (e.mode === 'percent' ? '+' + (num(e.value) * 100).toFixed(0) + '%' : '+' + num(e.value)) +
         (e.duration ? '，持续 ' + Math.round(num(e.duration) / 60) + ' 分钟' : '');
+    }
+    if (e.type === 'skillDamageUp') {
+      var sn = (e.skillIds || []).map(function (id) {
+        var s = skillById[id]; return s && s.n ? s.n : id;
+      }).join(' / ');
+      return '技能伤害 +' + pct(e.value) + (sn ? '（限 ' + sn + '）' : '');
     }
     return (e.name || e.type || '效果') + (e.chance != null ? '（' + pct(e.chance) + '）' : '');
   }

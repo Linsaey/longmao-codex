@@ -261,7 +261,7 @@ except Exception as e:
     print("印章表缺失，跳过:", e)
 
 DATA = {
-    "meta": {"builtAt": datetime.date.today().isoformat(), "src": "43.142.100.84:8080",
+    "meta": {"builtAt": datetime.date.today().isoformat(), "src": "106.14.162.38:8080",
              "n": {"m": len(MONS), "i": len(ITEMS), "s": len(SKILLS),
                    "set": len(SETS), "map": len(MAPS), "b": len(BUFFS)}},
     "regions": [{"id": r["id"], "n": r.get("name"), "k": r.get("kind")} for r in regions],
