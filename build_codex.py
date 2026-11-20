@@ -180,10 +180,59 @@ for s in skills:
                for x in (s.get("levels") or [])]})
 
 # ---------- 8. 套装 ----------
+# 5 件档不一定是纯数值，有的挂在 trigger（触发特效）上，例如：
+#   玄武 5 件：受击 5% → 魔法抗性 +9000 点 4 秒（≈90% 魔法减免）
+#   法老 5 件：闪避 10% → 最大攻击 / 最大魔法攻击 +10% 5 秒
+#   卡妙 5 件：暴击 10% → 物减 / 魔减 +2000 点 5 秒
+TRIG_WHEN = {"when_damaged": "受到伤害时", "when_crit": "被暴击时", "when_crit_dealt": "暴击时",
+             "when_damage_dealt": "造成伤害时", "when_dodged": "闪避成功时"}
+TRIG_STAT_CN = {"magicResist": "魔法抗性", "defense": "防御力", "physicalReduction": "物理减免",
+                "magicReduction": "魔法减免", "maxAttack": "最大攻击力", "maxMagicAttack": "最大魔法攻击力",
+                "maxHp": "生命上限", "hp": "生命上限", "attackSpeed": "攻速", "moveSpeed": "移速",
+                "critRate": "暴击率", "critDamage": "暴击伤害", "hitRate": "命中率", "dodgeRate": "闪避率",
+                "damageBonus": "总伤害", "skillDamageBonus": "技能伤害", "cooldownHaste": "技能极速",
+                "physicalDamage": "物理伤害", "magicDamage": "魔法伤害", "strength": "力量",
+                "magic": "魔力", "vitality": "体力", "luck": "幸运", "defenseIgnoreRate": "无视防御抗性"}
+
+
+def trig_text(trig):
+    """把套装 trigger 翻成一句中文（口径同客户端 vy()/by()：Percent 后缀 = 按百分比乘算）"""
+    if not trig:
+        return None
+    when = TRIG_WHEN.get(trig.get("type"), "触发时")
+    chance = trig.get("chance")
+    parts = []
+    for b in trig.get("buffs") or []:
+        raw = str(b.get("type") or "")
+        pct_mode = raw.lower().endswith("percent")
+        base = raw[:-7] if pct_mode else raw
+        lab = TRIG_STAT_CN.get(base, base)
+        v = b.get("value")
+        if pct_mode or b.get("mode") == "percent":
+            seg = "%s +%g%%" % (lab, round(float(v) * 100, 2))
+        else:
+            seg = "%s +%g 点" % (lab, float(v))
+            if base in ("magicResist", "defense"):
+                seg += "（≈%.1f%% %s）" % (float(v) / (1000 + float(v)) * 100,
+                                          "魔法减伤" if base == "magicResist" else "物理减伤")
+            elif base in ("physicalReduction", "magicReduction"):
+                seg += "（每击 -%g）" % (float(v) / 10)
+        parts.append(seg)
+    durs = [b.get("duration") for b in (trig.get("buffs") or []) if b.get("duration")]
+    dur = trig.get("duration") or (durs[0] if durs else None)
+    txt = "%s %s 概率：%s —— %s" % (when, ("%g%%" % (float(chance) * 100)) if chance else "",
+                                trig.get("name") or "套装特效", "、".join(parts))
+    if dur:
+        txt += "，持续 %g 秒" % float(dur)
+    return {"n": trig.get("name"), "w": when, "c": chance, "t": dur, "txt": txt}
+
+
 SETS = []
 for s in setbonus:
-    SETS.append({"id": s["id"], "n": s.get("name"),
-                 "tiers": [[t.get("pieces"), t.get("stats")] for t in (s.get("tiers") or [])],
+    tiers = []
+    for t in (s.get("tiers") or []):
+        tiers.append([t.get("pieces"), t.get("stats"), trig_text(t.get("trigger"))])
+    SETS.append({"id": s["id"], "n": s.get("name"), "tiers": tiers,
                  "items": [i["id"] for i in items if i.get("setId") == s["id"]]})
 
 # ---------- 9. BUFF ----------

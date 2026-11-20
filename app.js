@@ -64,6 +64,7 @@
     return Math.abs(v) >= 1000 ? v.toLocaleString('en-US') : String(v);
   }
   function statName(k) {
+    if (k === 'hpPercent' || k === 'hpMaxPercent') return '生命上限';
     var base = String(k).replace(/percent$/i, '');
     return (STAT[base] || base) + (/percent$/i.test(k) ? '%' : '');
   }
@@ -522,7 +523,10 @@
       tags = '<span class="tag set">' + o.items.length + ' 件</span>';
       sub = o.tiers.map(function (t) {
         var txt = Object.keys(t[1] || {}).map(function (k) { return statName(k) + statVal(k, t[1][k]); }).join('、');
-        return t[0] + '件 ' + (txt || '—');
+        var tg = t[2];
+        var tt = tg ? (tg.n || '触发特效') + '（' + (tg.w || '') +
+          (tg.c ? ' ' + nf(num(tg.c) * 100, 1) + '%' : '') + '）' : '';
+        return t[0] + '件 ' + ([txt, tt].filter(Boolean).join(' ＋ ') || '—');
       }).join(' · ');
     } else if (kind === 'map') {
       h = ico('', '地');
@@ -760,12 +764,19 @@
     } else if (kind === 'set') {
       o = setById[id]; if (!o) return;
       ico2 = (itemById[o.items[0]] || {}).img; name = o.n; sub = o.items.length + ' 件';
-      body = sec('套装效果', '<table><thead><tr><th>件数</th><th>加成</th></tr></thead><tbody>' +
+      body = sec('套装效果', '<table><thead><tr><th>件数</th><th>加成</th><th>触发特效</th></tr></thead><tbody>' +
         o.tiers.map(function (t) {
           var txt = Object.keys(t[1] || {}).map(function (k) { return statName(k) + statVal(k, t[1][k]); }).join('、');
-          return '<tr><td>' + t[0] + ' 件</td><td>' + esc(txt || '—') + '</td></tr>';
+          var tg = t[2];
+          var tt = tg ? '' + esc((tg.n || '') + (tg.w ? ' · ' + tg.w : '') +
+            (tg.t ? ' · ' + tg.t + ' 秒' : '')) : '';
+          return '<tr><td>' + t[0] + ' 件</td><td>' + esc(txt || '—') + '</td><td>' + (tt || '—') + '</td></tr>';
         }).join('') + '</tbody></table>' +
-        '<div class="desc">集齐对应件数时生效；同档效果按套装表结算。</div>') +
+        '<div class="desc">集齐对应件数时生效；同档效果按套装表结算。触发特效的触发率还会随这套的总强化等级提升（每 1 级 +2%）。</div>') +
+        (o.tiers.some(function (t) { return t[2]; }) ? sec('触发特效说明',
+          o.tiers.filter(function (t) { return t[2]; }).map(function (t) {
+            return '<div class="desc" style="margin-bottom:6px">▸ ' + t[0] + ' 件：' + esc(t[2].txt || '') + '</div>';
+          }).join('')) : '') +
         sec('套装物品', o.items.map(function (iid) {
           var it = itemById[iid] || {};
           return linkRow('equip', iid, it.n || iid, (slotNames(it) || '') + (it.req && it.req.level ? ' Lv' + it.req.level : ''), it.img);
